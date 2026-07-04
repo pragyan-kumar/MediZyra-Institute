@@ -47,6 +47,12 @@ export const api = {
       method: "PATCH",
     });
   },
+  async updateAppointmentByDoctor(appointmentId, payload) {
+    return request(`/appointments/${appointmentId}/doctor`, {
+      body: JSON.stringify(payload),
+      method: "PATCH",
+    });
+  },
   async completeAppointmentByDoctor(appointmentId, payload) {
     return request(`/appointments/${appointmentId}/doctor`, {
       body: JSON.stringify(payload),

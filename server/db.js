@@ -1,11 +1,24 @@
 import { MongoClient } from "mongodb";
+import { MongoMemoryServer } from "mongodb-memory-server";
 
-const mongoUri = process.env.MONGO_URI ?? "mongodb://127.0.0.1:27017";
+const externalMongoUri = process.env.MONGO_URI;
 const dbName = process.env.MONGO_DB_NAME ?? "medizyra";
 
 let clientPromise;
+let memoryServer;
 
 async function connectClient() {
+  let mongoUri = externalMongoUri;
+
+  if (!mongoUri) {
+    // No external MongoDB configured — spin up an embedded in-process instance.
+    memoryServer = await MongoMemoryServer.create({
+      instance: { dbName },
+    });
+    mongoUri = memoryServer.getUri();
+    console.log(`[MediZyra] Using embedded MongoDB at ${mongoUri}`);
+  }
+
   const client = new MongoClient(mongoUri, {
     serverSelectionTimeoutMS: 5000,
   });
@@ -35,8 +48,13 @@ export async function closeDb() {
   } finally {
     clientPromise = undefined;
   }
+
+  if (memoryServer) {
+    await memoryServer.stop();
+    memoryServer = undefined;
+  }
 }
 
 export function getMongoConfig() {
-  return { dbName, mongoUri };
+  return { dbName, mongoUri: externalMongoUri ?? "(embedded)" };
 }

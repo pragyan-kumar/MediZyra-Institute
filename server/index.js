@@ -1,10 +1,17 @@
+import { compare as comparePasswordHash } from "bcryptjs";
 import cors from "cors";
 import express from "express";
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { closeDb, getDb, getMongoConfig } from "./db.js";
 import { createSeedState } from "./seedData.js";
 
 const app = express();
 const port = Number(process.env.PORT ?? 4000);
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const distPath = resolve(__dirname, "../dist");
+const indexPath = resolve(distPath, "index.html");
 const PHONE_MIN_DIGITS = 10;
 const DEFAULT_DOCTOR_PASSWORD = "Doctor@123";
 const DEFAULT_DOCTOR_SLOTS = [
@@ -12,9 +19,19 @@ const DEFAULT_DOCTOR_SLOTS = [
   ["09:30 AM", "12:30 PM", "03:30 PM"],
   ["11:00 AM", "02:00 PM", "05:00 PM"],
 ];
+const APPOINTMENT_STATUS = {
+  CANCELLED: "Cancelled",
+  COMPLETED: "Completed",
+  CONFIRMED: "Confirmed",
+  REQUESTED: "Requested",
+};
 
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
+
+if (existsSync(indexPath)) {
+  app.use(express.static(distPath));
+}
 
 function createId(prefix) {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
@@ -114,7 +131,96 @@ function stripMongoFields(document) {
   delete sanitized._id;
   delete sanitized._seedIndex;
   delete sanitized.password;
+  delete sanitized.passwordHash;
+  delete sanitized.__v;
   return sanitized;
+}
+
+function buildAppointmentSeedKey(appointment) {
+  return [
+    normalizeEmail(appointment.patientEmail),
+    String(appointment.doctorName ?? "").trim().toLowerCase(),
+    String(appointment.appointmentDate ?? "").trim(),
+    String(appointment.appointmentSlot ?? "").trim(),
+  ].join("|");
+}
+
+function createLegacyUserId(user) {
+  const rolePrefix =
+    user.role === "admin" ? "usr-admin" : user.role === "doctor" ? "usr-doc" : "usr-patient";
+
+  return `${rolePrefix}-${String(user._id).slice(-8)}`;
+}
+
+async function verifyUserPassword(user, password) {
+  if (!password) {
+    return false;
+  }
+
+  if (typeof user.password === "string" && user.password === password) {
+    return true;
+  }
+
+  if (typeof user.passwordHash === "string" && user.passwordHash) {
+    try {
+      return await comparePasswordHash(password, user.passwordHash);
+    } catch {
+      return false;
+    }
+  }
+
+  return false;
+}
+
+function validateAdminTransition(currentStatus, nextStatus) {
+  if (currentStatus === APPOINTMENT_STATUS.COMPLETED) {
+    return "Completed appointments cannot be changed by admin controls.";
+  }
+
+  if (nextStatus === currentStatus) {
+    if ([APPOINTMENT_STATUS.REQUESTED, APPOINTMENT_STATUS.CONFIRMED].includes(currentStatus)) {
+      return "";
+    }
+
+    return "Only requested or confirmed appointments can be edited from admin triage.";
+  }
+
+  if (nextStatus === APPOINTMENT_STATUS.CONFIRMED && currentStatus !== APPOINTMENT_STATUS.REQUESTED) {
+    return "Admin can only confirm appointments that are still requested.";
+  }
+
+  if (
+    nextStatus === APPOINTMENT_STATUS.CANCELLED &&
+    ![APPOINTMENT_STATUS.REQUESTED, APPOINTMENT_STATUS.CONFIRMED].includes(currentStatus)
+  ) {
+    return "Only requested or confirmed appointments can be cancelled by admin.";
+  }
+
+  if (![APPOINTMENT_STATUS.CONFIRMED, APPOINTMENT_STATUS.CANCELLED].includes(nextStatus)) {
+    return "Admin can only mark appointments as confirmed or cancelled.";
+  }
+
+  return "";
+}
+
+function validateDoctorTransition(currentStatus, nextStatus) {
+  if (currentStatus === APPOINTMENT_STATUS.COMPLETED) {
+    return "Completed appointments cannot be changed by doctor controls.";
+  }
+
+  if (nextStatus === APPOINTMENT_STATUS.CONFIRMED && currentStatus !== APPOINTMENT_STATUS.REQUESTED) {
+    return "Doctor can only confirm appointments that are still requested.";
+  }
+
+  if (nextStatus === APPOINTMENT_STATUS.COMPLETED && currentStatus !== APPOINTMENT_STATUS.CONFIRMED) {
+    return "Only confirmed appointments can be completed by the doctor.";
+  }
+
+  if (![APPOINTMENT_STATUS.CONFIRMED, APPOINTMENT_STATUS.COMPLETED].includes(nextStatus)) {
+    return "Doctor can only confirm or complete appointments.";
+  }
+
+  return "";
 }
 
 async function getCollections() {
@@ -152,6 +258,95 @@ async function ensureSeedData() {
   );
 }
 
+async function repairLegacyData() {
+  const collections = await getCollections();
+  const seed = createSeedState();
+  const seedUsersByEmail = new Map(seed.users.map((user, index) => [normalizeEmail(user.email), { ...user, index }]));
+  const seedAppointmentsByKey = new Map(
+    seed.appointments.map((appointment, index) => [buildAppointmentSeedKey(appointment), { appointment, index }]),
+  );
+
+  const doctors = await collections.doctors.find({}, { projection: { _id: 0, id: 1, name: 1 } }).toArray();
+  const doctorIdByName = new Map(doctors.map((doctor) => [doctor.name, doctor.id]));
+  const users = await collections.users.find({}).toArray();
+
+  await Promise.all(
+    users.map(async (user) => {
+      const seedUser = seedUsersByEmail.get(normalizeEmail(user.email));
+      const updates = {};
+
+      if (!user.id) {
+        updates.id = seedUser?.id ?? createLegacyUserId(user);
+      }
+
+      if (user.role === "doctor" && !user.linkedDoctorId) {
+        updates.linkedDoctorId = seedUser?.linkedDoctorId ?? doctorIdByName.get(user.name) ?? "";
+      }
+
+      if (seedUser && user._seedIndex == null) {
+        updates._seedIndex = seedUser.index;
+      }
+
+      if (seedUser && !user.phone) {
+        updates.phone = seedUser.phone;
+      }
+
+      if (seedUser && !user.name) {
+        updates.name = seedUser.name;
+      }
+
+      if (seedUser && !user.password && !user.passwordHash) {
+        updates.password = seedUser.password;
+      }
+
+      if (Object.keys(updates).length) {
+        await collections.users.updateOne({ _id: user._id }, { $set: updates });
+      }
+    }),
+  );
+
+  const normalizedUsers = await collections.users
+    .find({}, { projection: { _id: 0, id: 1, email: 1 } })
+    .toArray();
+  const userIdByEmail = new Map(normalizedUsers.map((user) => [normalizeEmail(user.email), user.id]).filter(([, id]) => id));
+  const appointments = await collections.appointments.find({}).toArray();
+
+  await Promise.all(
+    appointments.map(async (appointment) => {
+      const seedMatch = seedAppointmentsByKey.get(buildAppointmentSeedKey(appointment));
+      const updates = {};
+
+      if (!appointment.id) {
+        updates.id = seedMatch?.appointment.id ?? createId("apt");
+      }
+
+      if (!appointment.patientId) {
+        updates.patientId = userIdByEmail.get(normalizeEmail(appointment.patientEmail)) ?? "";
+      }
+
+      if (!appointment.doctorId) {
+        updates.doctorId = doctorIdByName.get(appointment.doctorName) ?? "";
+      }
+
+      if (seedMatch && appointment._seedIndex == null) {
+        updates._seedIndex = seedMatch.index;
+      }
+
+      if (!appointment.bookedAt && appointment.createdAt) {
+        updates.bookedAt = appointment.createdAt;
+      }
+
+      if (!appointment.updatedAt && appointment.createdAt) {
+        updates.updatedAt = appointment.createdAt;
+      }
+
+      if (Object.keys(updates).length) {
+        await collections.appointments.updateOne({ _id: appointment._id }, { $set: updates });
+      }
+    }),
+  );
+}
+
 function compareSeedOrder(left, right) {
   const leftCreatedAt = Date.parse(left.createdAt ?? "") || 0;
   const rightCreatedAt = Date.parse(right.createdAt ?? "") || 0;
@@ -166,10 +361,10 @@ function compareSeedOrder(left, right) {
 async function readAppState() {
   const collections = await getCollections();
   const [users, doctors, appointments, contactMessages] = await Promise.all([
-    collections.users.find({}, { projection: { _id: 0, password: 0 } }).toArray(),
-    collections.doctors.find({}, { projection: { _id: 0 } }).toArray(),
-    collections.appointments.find({}, { projection: { _id: 0 } }).toArray(),
-    collections.contactMessages.find({}, { projection: { _id: 0 } }).toArray(),
+    collections.users.find({}, { projection: { _id: 0, __v: 0, password: 0, passwordHash: 0 } }).toArray(),
+    collections.doctors.find({}, { projection: { _id: 0, __v: 0 } }).toArray(),
+    collections.appointments.find({}, { projection: { _id: 0, __v: 0 } }).toArray(),
+    collections.contactMessages.find({}, { projection: { _id: 0, __v: 0 } }).toArray(),
   ]);
 
   return {
@@ -234,8 +429,10 @@ app.post("/api/auth/login", async (request, response) => {
   const email = normalizeEmail(request.body.email);
   const password = String(request.body.password ?? "");
 
-  const matchedUser = await users.findOne({ email, password });
-  if (!matchedUser) {
+  const matchedUser = await users.findOne({ email });
+  const isValidPassword = matchedUser ? await verifyUserPassword(matchedUser, password) : false;
+
+  if (!matchedUser || !isValidPassword) {
     response.status(401).json({
       error: "We could not match that email and password in the system.",
     });
@@ -364,11 +561,24 @@ app.patch("/api/appointments/:appointmentId/admin", async (request, response) =>
   }
 
   const { appointments } = await getCollections();
+  const appointment = await appointments.findOne({ id: request.params.appointmentId });
+  if (!appointment) {
+    response.status(404).json({ error: "Appointment not found." });
+    return;
+  }
+
+  const nextStatus = String(request.body.status ?? APPOINTMENT_STATUS.REQUESTED);
+  const transitionError = validateAdminTransition(appointment.status, nextStatus);
+  if (transitionError) {
+    response.status(400).json({ error: transitionError });
+    return;
+  }
+
   const result = await appointments.updateOne(
     { id: request.params.appointmentId },
     {
       $set: {
-        status: String(request.body.status ?? "Requested"),
+        status: nextStatus,
         consultationMode: String(request.body.consultationMode ?? "In-clinic"),
         appointmentDate: String(request.body.appointmentDate ?? ""),
         appointmentSlot: String(request.body.appointmentSlot ?? ""),
@@ -390,35 +600,54 @@ app.patch("/api/appointments/:appointmentId/doctor", async (request, response) =
   const actor = await findActor(request.body.actorUserId);
   if (!actor || actor.role !== "doctor") {
     response.status(403).json({
-      error: "Only doctor accounts can save clinical notes.",
+      error: "Only doctor accounts can update doctor-handled appointments.",
     });
     return;
   }
-
-  const doctorSummary = String(request.body.doctorSummary ?? "").trim();
-  if (!doctorSummary) {
-    response.status(400).json({
-      error: "Please add a consultation summary before completing the visit.",
-    });
-    return;
-  }
-
-  const prescription = String(request.body.prescriptionItems ?? "")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
 
   const { appointments } = await getCollections();
+  const appointment = await appointments.findOne({
+    id: request.params.appointmentId,
+    doctorId: actor.linkedDoctorId,
+  });
+  if (!appointment) {
+    response.status(404).json({ error: "Appointment not found for this doctor." });
+    return;
+  }
+
+  const nextStatus = String(request.body.status ?? APPOINTMENT_STATUS.COMPLETED);
+  const transitionError = validateDoctorTransition(appointment.status, nextStatus);
+  if (transitionError) {
+    response.status(400).json({ error: transitionError });
+    return;
+  }
+
+  const update = {
+    status: nextStatus,
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (nextStatus === APPOINTMENT_STATUS.COMPLETED) {
+    const doctorSummary = String(request.body.doctorSummary ?? "").trim();
+    if (!doctorSummary) {
+      response.status(400).json({
+        error: "Please add a consultation summary before completing the visit.",
+      });
+      return;
+    }
+
+    update.doctorSummary = doctorSummary;
+    update.prescription = String(request.body.prescriptionItems ?? "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    update.followUpDate = String(request.body.followUpDate ?? "");
+  }
+
   const result = await appointments.updateOne(
     { id: request.params.appointmentId, doctorId: actor.linkedDoctorId },
     {
-      $set: {
-        status: "Completed",
-        doctorSummary,
-        prescription,
-        followUpDate: String(request.body.followUpDate ?? ""),
-        updatedAt: new Date().toISOString(),
-      },
+      $set: update,
     },
   );
 
@@ -538,10 +767,12 @@ app.post("/api/doctors/upsert", async (request, response) => {
     role: "doctor",
     name: doctorRecord.name,
     email: normalizedEmail,
-    password: existingUser?.password ?? DEFAULT_DOCTOR_PASSWORD,
     phone: normalizePhone(form.phone),
     linkedDoctorId: doctorRecord.id,
     createdAt: existingUser?.createdAt ?? new Date().toISOString(),
+    ...(existingUser?.passwordHash
+      ? { passwordHash: existingUser.passwordHash }
+      : { password: existingUser?.password ?? DEFAULT_DOCTOR_PASSWORD }),
   };
 
   if (existingDoctor) {
@@ -587,8 +818,20 @@ app.use((error, _request, response, _next) => {
   });
 });
 
+if (existsSync(indexPath)) {
+  app.get("/{*path}", (_request, response, next) => {
+    if (_request.path.startsWith("/api")) {
+      next();
+      return;
+    }
+
+    response.sendFile(indexPath);
+  });
+}
+
 async function start() {
   await ensureSeedData();
+  await repairLegacyData();
 
   app.listen(port, () => {
     console.log(`MediZyra API listening on http://127.0.0.1:${port}`);

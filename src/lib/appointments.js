@@ -45,10 +45,10 @@ export function parseAppointmentDateTime(date, time) {
 }
 
 export function isUpcomingAppointment(appointment) {
-  return parseAppointmentDateTime(
-    appointment.appointmentDate,
-    appointment.appointmentSlot,
-  ) >= DEMO_NOW;
+  return (
+    ["Requested", "Confirmed"].includes(appointment.status) &&
+    parseAppointmentDateTime(appointment.appointmentDate, appointment.appointmentSlot) >= DEMO_NOW
+  );
 }
 
 export function sortAppointmentsNewestFirst(appointments) {

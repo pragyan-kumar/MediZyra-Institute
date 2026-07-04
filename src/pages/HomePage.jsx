@@ -33,14 +33,14 @@ export default function HomePage() {
             <div className="hero-copy">
               <p className="eyebrow">Integrated patient care coordination</p>
               <h2>
-                MediZyra turns appointments, triage, and doctor follow-up into one
-                clean care operations workspace.
+                MediZyra brings appointments, triage, and doctor follow-up into one
+                clear care operations workspace.
               </h2>
               <p className="lead">
-                This version keeps the real hospital roles from the earlier HMS concept,
-                but changes the visual identity and the flow itself: patients send care
-                requests, admins triage them, and doctors complete visits with digital
-                summaries and prescriptions.
+                Patients raise care requests, admins coordinate the queue, and doctors
+                close each visit with digital notes, prescriptions, and follow-up plans.
+                Every update stays connected to the patient timeline, so upcoming visits,
+                triage decisions, and completed consultations remain easy to track in one place.
               </p>
               <div className="hero-actions">
                 <Link className="button button-primary" to="/doctors">

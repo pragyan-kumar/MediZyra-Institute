@@ -8,6 +8,7 @@ import DoctorDetailPage from "./pages/DoctorDetailPage";
 import AuthPage from "./pages/AuthPage";
 import ContactPage from "./pages/ContactPage";
 import PortalPage from "./pages/PortalPage";
+import AdminControlsPage from "./pages/AdminControlsPage";
 import NotFoundPage from "./pages/NotFoundPage";
 
 function ScrollToTop() {
@@ -80,6 +81,7 @@ function AppShell() {
             <Route path="/signin" element={<AuthPage />} />
             <Route path="/contact" element={<ContactPage />} />
             <Route path="/portal" element={<PortalPage />} />
+            <Route path="/portal/admin-controls" element={<AdminControlsPage />} />
             <Route path="/workspace/:role" element={<Navigate replace to="/portal" />} />
             <Route path="*" element={<NotFoundPage />} />
           </Routes>

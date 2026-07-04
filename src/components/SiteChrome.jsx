@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { brand } from "../data/siteData";
 import { useAppContext } from "../context/useAppContext";
-import brandLogo from "../assets/reference/logo.png";
+import brandLogo from "../assets/reference/logo.jpeg";
 
 function NavItem({ children, to }) {
   return (

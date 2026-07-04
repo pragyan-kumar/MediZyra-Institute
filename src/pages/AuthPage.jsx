@@ -182,10 +182,6 @@ export default function AuthPage() {
               </article>
             ))}
           </div>
-          <p className="muted-copy">
-            New registrations now go through the local API layer so they can be saved
-            into MongoDB instead of staying in browser-only demo storage.
-          </p>
         </article>
       </div>
     </section>

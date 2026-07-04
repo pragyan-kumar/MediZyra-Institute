@@ -11,50 +11,9 @@ import {
 } from "../lib/appointments";
 
 const STATUS_OPTIONS = ["All", "Requested", "Confirmed", "Completed", "Cancelled"];
-const DOCTOR_FORM_TEMPLATE = {
-  doctorId: "",
-  name: "",
-  specialty: "",
-  clinic: "",
-  experience: "",
-  fee: "",
-  location: "",
-  languages: "",
-  focusAreas: "",
-  credentials: "",
-  intro: "",
-  about: "",
-  tone: "teal",
-  email: "",
-  phone: "",
-  availabilityDate: "2026-03-30",
-};
 
-function createDoctorFormState(doctor, users) {
-  if (!doctor) {
-    return DOCTOR_FORM_TEMPLATE;
-  }
-
-  const linkedUser = users.find((user) => user.linkedDoctorId === doctor.id);
-
-  return {
-    doctorId: doctor.id,
-    name: doctor.name,
-    specialty: doctor.specialty,
-    clinic: doctor.clinic,
-    experience: doctor.experience,
-    fee: String(doctor.fee),
-    location: doctor.location,
-    languages: doctor.languages.join(", "),
-    focusAreas: doctor.focusAreas.join(", "),
-    credentials: doctor.credentials,
-    intro: doctor.intro,
-    about: doctor.about,
-    tone: doctor.tone,
-    email: linkedUser?.email ?? "",
-    phone: linkedUser?.phone ?? "",
-    availabilityDate: doctor.schedule?.[0]?.date ?? DOCTOR_FORM_TEMPLATE.availabilityDate,
-  };
+function safeText(value, fallback = "") {
+  return typeof value === "string" ? value : value == null ? fallback : String(value);
 }
 
 function filterAppointments(appointments, searchTerm, statusFilter) {
@@ -65,12 +24,12 @@ function filterAppointments(appointments, searchTerm, statusFilter) {
       statusFilter === "All" || appointment.status === statusFilter;
     const matchesQuery =
       !normalizedQuery ||
-      appointment.patientName.toLowerCase().includes(normalizedQuery) ||
-      appointment.patientEmail.toLowerCase().includes(normalizedQuery) ||
-      appointment.phone.toLowerCase().includes(normalizedQuery) ||
-      appointment.reason.toLowerCase().includes(normalizedQuery) ||
-      appointment.symptoms.toLowerCase().includes(normalizedQuery) ||
-      appointment.doctorName.toLowerCase().includes(normalizedQuery);
+      safeText(appointment.patientName).toLowerCase().includes(normalizedQuery) ||
+      safeText(appointment.patientEmail).toLowerCase().includes(normalizedQuery) ||
+      safeText(appointment.phone).toLowerCase().includes(normalizedQuery) ||
+      safeText(appointment.reason).toLowerCase().includes(normalizedQuery) ||
+      safeText(appointment.symptoms).toLowerCase().includes(normalizedQuery) ||
+      safeText(appointment.doctorName).toLowerCase().includes(normalizedQuery);
 
     return matchesStatus && matchesQuery;
   });
@@ -123,6 +82,10 @@ function AdminAppointmentCard({ appointment, doctor, onSave }) {
   const schedule = doctor?.schedule ?? [];
   const activeSchedule =
     schedule.find((slot) => slot.date === form.appointmentDate) ?? schedule[0];
+  const canEditDetails = ["Requested", "Confirmed"].includes(appointment.status);
+  const canConfirm = appointment.status === "Requested";
+  const canCancel = appointment.status === "Requested" || appointment.status === "Confirmed";
+  const canSaveEdits = canEditDetails;
 
   const updateField = (field) => (event) => {
     const value = event.target.value;
@@ -141,7 +104,7 @@ function AdminAppointmentCard({ appointment, doctor, onSave }) {
     setForm((current) => ({ ...current, [field]: value }));
   };
 
-  const submitChange = async (status) => {
+  const submitChange = async (status, successMessage) => {
     setIsSaving(true);
     const result = await onSave({
       appointmentId: appointment.id,
@@ -149,7 +112,7 @@ function AdminAppointmentCard({ appointment, doctor, onSave }) {
       ...form,
     });
 
-    setFeedback(result.ok ? `Request marked ${status.toLowerCase()}.` : result.error);
+    setFeedback(result.ok ? successMessage : result.error);
     setIsSaving(false);
   };
 
@@ -195,6 +158,7 @@ function AdminAppointmentCard({ appointment, doctor, onSave }) {
           <span>Date</span>
           <select
             className="text-input"
+            disabled={!canEditDetails}
             value={form.appointmentDate}
             onChange={updateField("appointmentDate")}
           >
@@ -210,6 +174,7 @@ function AdminAppointmentCard({ appointment, doctor, onSave }) {
           <span>Slot</span>
           <select
             className="text-input"
+            disabled={!canEditDetails}
             value={form.appointmentSlot}
             onChange={updateField("appointmentSlot")}
           >
@@ -225,6 +190,7 @@ function AdminAppointmentCard({ appointment, doctor, onSave }) {
           <span>Mode</span>
           <select
             className="text-input"
+            disabled={!canEditDetails}
             value={form.consultationMode}
             onChange={updateField("consultationMode")}
           >
@@ -238,6 +204,7 @@ function AdminAppointmentCard({ appointment, doctor, onSave }) {
         <span>Admin intake note</span>
         <textarea
           className="text-input textarea"
+          disabled={!canEditDetails}
           rows="3"
           value={form.adminSummary}
           onChange={updateField("adminSummary")}
@@ -247,28 +214,49 @@ function AdminAppointmentCard({ appointment, doctor, onSave }) {
       {feedback ? <p className="portal-feedback">{feedback}</p> : null}
 
       <div className="card-actions">
-        <button
-          className="button button-primary"
-          disabled={isSaving}
-          type="button"
-          onClick={() => submitChange("Confirmed")}
-        >
-          {isSaving ? "Saving..." : "Confirm slot"}
-        </button>
-        <button
-          className="button button-secondary"
-          disabled={isSaving}
-          type="button"
-          onClick={() => submitChange("Cancelled")}
-        >
-          Cancel request
-        </button>
+        {canSaveEdits ? (
+          <button
+            className="button button-secondary"
+            disabled={isSaving}
+            type="button"
+            onClick={() => submitChange(appointment.status, "Appointment changes saved.")}
+          >
+            {isSaving ? "Saving..." : "Save changes"}
+          </button>
+        ) : null}
+        {canConfirm ? (
+          <button
+            className="button button-primary"
+            disabled={isSaving}
+            type="button"
+            onClick={() => submitChange("Confirmed", "Request marked confirmed.")}
+          >
+            {isSaving ? "Saving..." : "Confirm slot"}
+          </button>
+        ) : null}
+        {canCancel ? (
+          <button
+            className="button button-secondary"
+            disabled={isSaving}
+            type="button"
+            onClick={() => submitChange("Cancelled", "Request marked cancelled.")}
+          >
+            Cancel request
+          </button>
+        ) : null}
+        {!canConfirm && !canCancel ? (
+          <p className="muted-copy">
+            {appointment.status === "Completed"
+              ? "Completed visits can no longer be cancelled or re-triaged."
+              : "This appointment is no longer editable from admin triage."}
+          </p>
+        ) : null}
       </div>
     </article>
   );
 }
 
-function DoctorAppointmentCard({ appointment, doctorFee, onComplete }) {
+function DoctorAppointmentCard({ appointment, doctorFee, onUpdate }) {
   const [doctorSummary, setDoctorSummary] = useState(appointment.doctorSummary);
   const [prescriptionItems, setPrescriptionItems] = useState(
     appointment.prescription.join(", "),
@@ -276,17 +264,34 @@ function DoctorAppointmentCard({ appointment, doctorFee, onComplete }) {
   const [followUpDate, setFollowUpDate] = useState(appointment.followUpDate);
   const [feedback, setFeedback] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const canConfirm = appointment.status === "Requested";
+  const canComplete = appointment.status === "Confirmed";
+  const fieldsDisabled = !canComplete;
 
-  const handleComplete = async () => {
+  const handleDoctorAction = async (status) => {
     setIsSaving(true);
-    const result = await onComplete({
-      appointmentId: appointment.id,
-      doctorSummary,
-      followUpDate,
-      prescriptionItems,
-    });
+    const result = await onUpdate(
+      status === "Confirmed"
+        ? {
+            appointmentId: appointment.id,
+            status,
+          }
+        : {
+            appointmentId: appointment.id,
+            doctorSummary,
+            followUpDate,
+            prescriptionItems,
+            status,
+          },
+    );
 
-    setFeedback(result.ok ? "Consultation saved to patient history." : result.error);
+    setFeedback(
+      result.ok
+        ? status === "Confirmed"
+          ? "Appointment confirmed and ready for consultation."
+          : "Consultation saved to patient history."
+        : result.error,
+    );
     setIsSaving(false);
   };
 
@@ -330,6 +335,7 @@ function DoctorAppointmentCard({ appointment, doctorFee, onComplete }) {
         <span>Consultation summary</span>
         <textarea
           className="text-input textarea"
+          disabled={fieldsDisabled}
           rows="4"
           value={doctorSummary}
           onChange={(event) => setDoctorSummary(event.target.value)}
@@ -341,6 +347,7 @@ function DoctorAppointmentCard({ appointment, doctorFee, onComplete }) {
           <span>Prescription items</span>
           <input
             className="text-input"
+            disabled={fieldsDisabled}
             type="text"
             value={prescriptionItems}
             onChange={(event) => setPrescriptionItems(event.target.value)}
@@ -352,6 +359,7 @@ function DoctorAppointmentCard({ appointment, doctorFee, onComplete }) {
           <span>Follow-up date</span>
           <input
             className="text-input"
+            disabled={fieldsDisabled}
             type="date"
             value={followUpDate}
             onChange={(event) => setFollowUpDate(event.target.value)}
@@ -362,9 +370,33 @@ function DoctorAppointmentCard({ appointment, doctorFee, onComplete }) {
       {feedback ? <p className="portal-feedback">{feedback}</p> : null}
 
       <div className="card-actions">
-        <button className="button button-primary" disabled={isSaving} type="button" onClick={handleComplete}>
-          {isSaving ? "Saving..." : "Save consultation"}
-        </button>
+        {canConfirm ? (
+          <button
+            className="button button-primary"
+            disabled={isSaving}
+            type="button"
+            onClick={() => handleDoctorAction("Confirmed")}
+          >
+            {isSaving ? "Saving..." : "Confirm request"}
+          </button>
+        ) : null}
+        {canComplete ? (
+          <button
+            className="button button-primary"
+            disabled={isSaving}
+            type="button"
+            onClick={() => handleDoctorAction("Completed")}
+          >
+            {isSaving ? "Saving..." : "Mark completed"}
+          </button>
+        ) : null}
+        {!canConfirm && !canComplete ? (
+          <p className="muted-copy">
+            {appointment.status === "Completed"
+              ? "This appointment is already completed."
+              : "Only admin can cancel a confirmed appointment."}
+          </p>
+        ) : null}
       </div>
     </article>
   );
@@ -437,271 +469,7 @@ function PatientHistoryCard({ appointment, doctorFee }) {
   );
 }
 
-function ContactMessageCard({ message }) {
-  return (
-    <article className="panel support-ticket-card">
-      <div className="portal-card-head">
-        <div>
-          <span className="badge">{message.category}</span>
-          <h3>{message.subject}</h3>
-          <p>{message.name}</p>
-        </div>
-        <div className="portal-meta">
-          <span>{message.submittedByRole}</span>
-          <span>{formatFriendlyDateTime(message.createdAt)}</span>
-        </div>
-      </div>
-      <div className="portal-grid">
-        <div>
-          <strong>Email</strong>
-          <p>{message.email}</p>
-        </div>
-        <div>
-          <strong>Phone</strong>
-          <p>{message.phone || "Not provided"}</p>
-        </div>
-      </div>
-      <p>{message.message}</p>
-    </article>
-  );
-}
-
-function DoctorManagementPanel({ doctors, saveDoctorProfile, users }) {
-  const [selectedDoctorId, setSelectedDoctorId] = useState("new");
-  const [form, setForm] = useState(DOCTOR_FORM_TEMPLATE);
-  const [feedback, setFeedback] = useState("");
-  const [error, setError] = useState("");
-  const [isSaving, setIsSaving] = useState(false);
-
-  const handleDoctorSelection = (event) => {
-    const doctorId = event.target.value;
-    setSelectedDoctorId(doctorId);
-    setFeedback("");
-    setError("");
-
-    if (doctorId === "new") {
-      setForm(DOCTOR_FORM_TEMPLATE);
-      return;
-    }
-
-    const doctor = doctors.find((item) => item.id === doctorId);
-    setForm(createDoctorFormState(doctor, users));
-  };
-
-  const updateField = (field) => (event) => {
-    setForm((current) => ({ ...current, [field]: event.target.value }));
-  };
-
-  const handleSubmit = async (event) => {
-    event.preventDefault();
-    setFeedback("");
-    setError("");
-    setIsSaving(true);
-
-    const result = await saveDoctorProfile(form);
-    if (!result.ok) {
-      setError(result.error);
-      setIsSaving(false);
-      return;
-    }
-
-    setFeedback(result.message);
-    if (!form.doctorId) {
-      setSelectedDoctorId("new");
-      setForm(DOCTOR_FORM_TEMPLATE);
-    }
-    setIsSaving(false);
-  };
-
-  return (
-    <article className="panel admin-doctor-panel">
-      <SectionHeading
-        eyebrow="Admin controls"
-        title="Manage specialist profiles"
-        subtitle="Add a new doctor or update an existing profile so listings, fees, and portal-linked details stay accurate."
-      />
-
-      <label className="field-block">
-        <span>Choose profile</span>
-        <select className="text-input" value={selectedDoctorId} onChange={handleDoctorSelection}>
-          <option value="new">Add new doctor</option>
-          {doctors.map((doctor) => (
-            <option key={doctor.id} value={doctor.id}>
-              {doctor.name}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <form className="contact-form" onSubmit={handleSubmit}>
-        <div className="form-grid">
-          <label className="field-block">
-            <span>Name</span>
-            <input className="text-input" value={form.name} onChange={updateField("name")} />
-          </label>
-          <label className="field-block">
-            <span>Specialty</span>
-            <input
-              className="text-input"
-              value={form.specialty}
-              onChange={updateField("specialty")}
-            />
-          </label>
-          <label className="field-block">
-            <span>Clinic</span>
-            <input className="text-input" value={form.clinic} onChange={updateField("clinic")} />
-          </label>
-          <label className="field-block">
-            <span>Experience</span>
-            <input
-              className="text-input"
-              value={form.experience}
-              onChange={updateField("experience")}
-              placeholder="e.g. 12 years"
-            />
-          </label>
-          <label className="field-block">
-            <span>Fee</span>
-            <input
-              className="text-input"
-              type="number"
-              min="1"
-              value={form.fee}
-              onChange={updateField("fee")}
-            />
-          </label>
-          <label className="field-block">
-            <span>Location</span>
-            <input
-              className="text-input"
-              value={form.location}
-              onChange={updateField("location")}
-            />
-          </label>
-          <label className="field-block">
-            <span>Doctor email</span>
-            <input
-              className="text-input"
-              type="email"
-              value={form.email}
-              onChange={updateField("email")}
-            />
-          </label>
-          <label className="field-block">
-            <span>Doctor phone</span>
-            <input className="text-input" value={form.phone} onChange={updateField("phone")} />
-          </label>
-          <label className="field-block">
-            <span>Availability date</span>
-            <input
-              className="text-input"
-              type="date"
-              value={form.availabilityDate}
-              onChange={updateField("availabilityDate")}
-            />
-          </label>
-          <label className="field-block">
-            <span>Color tone</span>
-            <select className="text-input" value={form.tone} onChange={updateField("tone")}>
-              <option value="teal">Teal</option>
-              <option value="coral">Coral</option>
-              <option value="gold">Gold</option>
-              <option value="navy">Navy</option>
-            </select>
-          </label>
-          <label className="field-block form-grid-span">
-            <span>Languages</span>
-            <input
-              className="text-input"
-              value={form.languages}
-              onChange={updateField("languages")}
-              placeholder="English, Hindi"
-            />
-          </label>
-          <label className="field-block form-grid-span">
-            <span>Focus areas</span>
-            <input
-              className="text-input"
-              value={form.focusAreas}
-              onChange={updateField("focusAreas")}
-              placeholder="Migraine pathway, Sleep review"
-            />
-          </label>
-          <label className="field-block form-grid-span">
-            <span>Credentials</span>
-            <input
-              className="text-input"
-              value={form.credentials}
-              onChange={updateField("credentials")}
-            />
-          </label>
-        </div>
-
-        <label className="field-block">
-          <span>Short intro</span>
-          <textarea
-            className="text-input textarea"
-            rows="3"
-            value={form.intro}
-            onChange={updateField("intro")}
-          />
-        </label>
-
-        <label className="field-block">
-          <span>About</span>
-          <textarea
-            className="text-input textarea"
-            rows="4"
-            value={form.about}
-            onChange={updateField("about")}
-          />
-        </label>
-
-        {error ? <p className="form-error">{error}</p> : null}
-        {feedback ? <p className="form-success">{feedback}</p> : null}
-
-        <button className="button button-primary" disabled={isSaving} type="submit">
-          {isSaving ? "Saving profile..." : "Save doctor profile"}
-        </button>
-      </form>
-      <p className="muted-copy">
-        New doctor accounts use the default password <code>Doctor@123</code> until you
-        change it in the account workflow.
-      </p>
-    </article>
-  );
-}
-
-function ContactInbox({ contactMessages }) {
-  if (!contactMessages.length) {
-    return (
-      <article className="panel">
-        <SectionHeading
-          eyebrow="Support inbox"
-          title="No patient messages yet"
-          subtitle="Questions and service feedback submitted from the contact page will appear here for admins."
-        />
-      </article>
-    );
-  }
-
-  return (
-    <article className="panel admin-contact-panel">
-      <SectionHeading
-        eyebrow="Support inbox"
-        title="Patient questions and feedback"
-        subtitle="Admins can review patient concerns, service doubts, and support requests from the contact desk."
-      />
-      <div className="support-ticket-list">
-        {contactMessages.map((message) => (
-          <ContactMessageCard key={message.id} message={message} />
-        ))}
-      </div>
-    </article>
-  );
-}
-
-function AdminPortal({ appointments, contactMessages, doctors, onSave, saveDoctorProfile, users }) {
+function AdminPortal({ appointments, contactMessages, doctors, onSave }) {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const deferredSearch = useDeferredValue(searchTerm);
@@ -736,6 +504,19 @@ function AdminPortal({ appointments, contactMessages, doctors, onSave, saveDocto
         />
       </div>
 
+      <div className="panel portal-admin-entry">
+        <SectionHeading
+          eyebrow="Admin tools"
+          title="Open admin controls"
+          subtitle="Manage specialist profiles and review patient messages from a dedicated controls workspace."
+        />
+        <div className="card-actions">
+          <Link className="button button-primary" to="/portal/admin-controls">
+            Admin controls
+          </Link>
+        </div>
+      </div>
+
       <PortalToolbar
         label="Search patient requests"
         placeholder="Search by patient name, email, phone, reason, or doctor..."
@@ -765,20 +546,11 @@ function AdminPortal({ appointments, contactMessages, doctors, onSave, saveDocto
           description="Try a different search term or switch the status filter to view more patient requests."
         />
       )}
-
-      <div className="portal-admin-grid">
-        <DoctorManagementPanel
-          doctors={doctors}
-          saveDoctorProfile={saveDoctorProfile}
-          users={users}
-        />
-        <ContactInbox contactMessages={contactMessages} />
-      </div>
     </>
   );
 }
 
-function DoctorPortal({ appointments, doctors, onComplete, currentUser }) {
+function DoctorPortal({ appointments, doctors, onUpdate, currentUser }) {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const deferredSearch = useDeferredValue(searchTerm);
@@ -850,7 +622,7 @@ function DoctorPortal({ appointments, doctors, onComplete, currentUser }) {
               appointment={appointment}
               doctorFee={doctorFee}
               key={appointment.id}
-              onComplete={onComplete}
+              onUpdate={onUpdate}
             />
           ))}
         </div>
@@ -927,14 +699,12 @@ export default function PortalPage() {
   const {
     appointments,
     backendError,
-    completeAppointmentByDoctor,
     contactMessages,
     currentUser,
     doctors,
     isHydrating,
-    saveDoctorProfile,
+    updateAppointmentByDoctor,
     updateAppointmentByAdmin,
-    users,
   } = useAppContext();
 
   if (isHydrating) {
@@ -1002,8 +772,6 @@ export default function PortalPage() {
             contactMessages={contactMessages}
             doctors={doctors}
             onSave={updateAppointmentByAdmin}
-            saveDoctorProfile={saveDoctorProfile}
-            users={users}
           />
         ) : null}
 
@@ -1012,7 +780,7 @@ export default function PortalPage() {
             appointments={portalAppointments}
             currentUser={currentUser}
             doctors={doctors}
-            onComplete={completeAppointmentByDoctor}
+            onUpdate={updateAppointmentByDoctor}
           />
         ) : null}
 

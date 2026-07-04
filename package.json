@@ -12,6 +12,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "mongodb": "^7.1.1",
@@ -28,6 +29,8 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.4.0",
+    "mongodb-memory-server": "^11.2.0",
+    "pptxgenjs": "^4.0.1",
     "vite": "^8.0.1"
   }
 }
